@@ -1,4 +1,6 @@
+# UniLink Student Ecosystem
 node_modules/
+_node_modules_old/
 .expo/
 dist/
 npm-debug.*
@@ -9,3 +11,4 @@ yarn-error.*
 *.ipa
 .pnp*
 .yarn/
+tsconfig.json

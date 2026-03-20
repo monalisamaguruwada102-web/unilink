@@ -1,227 +1,700 @@
+import 'react-native-url-polyfill/auto';
 import 'react-native-gesture-handler';
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Image, SafeAreaView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, FlatList, Linking } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  View, Text, TouchableOpacity, TextInput, ScrollView,
+  SafeAreaView, ActivityIndicator, Alert, KeyboardAvoidingView,
+  Platform, Linking, StyleSheet, Dimensions, Image,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from './supabase';
-import { 
-  Heart, X, MessageCircle, Info, ShieldCheck, GraduationCap, 
-  MapPin, School, Mail, User, Sparkles, Send, Globe, Filter, Star, 
-  Bell, Plus, Image as LucidImage, ArrowLeft, MoreHorizontal,
-  MessageSquare, UserPlus, BookOpen, Ticket, Zap, Ghost, ShoppingBag, Phone
+import {
+  Heart, X, MapPin, User, Sparkles, Send, Globe, Star,
+  ArrowLeft, MessageSquare, BookOpen, Ticket, Ghost, Phone, Camera
 } from 'lucide-react-native';
-import * as Location from 'expo-location';
 
-// --- UNI-LINK STUDENT ECOSYSTEM (v2.1 STABILIZED) ---
+// ============================================================
+//  UNI-LINK STUDENT ECOSYSTEM — v3.0 (PREMIUM WEB EDITION)
+// ============================================================
+
+const C = {
+  bg:       '#05051e',
+  webBg:    '#02020a',
+  card:     'rgba(255,255,255,0.05)',
+  border:   'rgba(255,255,255,0.08)',
+  primary:  '#7c3aed',
+  primary2: '#6d28d9',
+  pink:     '#f472b6',
+  text:     '#ffffff',
+  dim:      'rgba(255,255,255,0.3)',
+  dimmer:   'rgba(255,255,255,0.1)',
+};
+
+// ── Shared UI ────────────────────────────────────────────────
+
+function Btn({ label, onPress, loading, style, textStyle, secondary }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.75}
+      style={[styles.btn, secondary ? styles.btnSecondary : styles.btnPrimary, style]}
+    >
+      {loading
+        ? <ActivityIndicator color="#fff" />
+        : <Text style={[styles.btnText, textStyle]}>{label}</Text>}
+    </TouchableOpacity>
+  );
+}
+
+function Field({ placeholder, value, onChangeText, secure }) {
+  return (
+    <View style={styles.field}>
+      <TextInput
+        style={styles.fieldInput}
+        placeholder={placeholder}
+        placeholderTextColor="rgba(255,255,255,0.25)"
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={!!secure}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+    </View>
+  );
+}
+
+// ── Web Responsive Wrapper ─────────────────────────────────
+
+function AppContainer({ children }) {
+  const isWeb = Platform.OS === 'web';
+  const { width } = Dimensions.get('window');
+  const isMobileView = width < 768;
+
+  if (!isWeb || isMobileView) {
+    return (
+      <View style={{ flex: 1, backgroundColor: C.bg }}>
+        {children}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.webViewport}>
+      <View style={styles.webSidebar}>
+        <View style={{ padding: 40 }}>
+           <Sparkles size={48} color={C.pink} />
+           <Text style={[styles.logo, { marginTop: 24, fontSize: 32 }]}>UniLink</Text>
+           <Text style={[styles.subtext, { marginBottom: 32 }]}>Student Ecosystem</Text>
+           <Text style={styles.sidebarDesc}>
+             Zimbabwe's exclusive university platform for students to connect, study, and thrive together.
+           </Text>
+        </View>
+        <View style={styles.sidebarFooter}>
+           <Text style={styles.sidebarFooterText}>© 2026 UniLink Zim</Text>
+        </View>
+      </View>
+      
+      <View style={styles.phoneContainer}>
+        <View style={styles.phoneFrame}>
+          {children}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Core App ────────────────────────────────────────────────
 
 export default function App() {
-  const [session, setSession] = useState(null);
-  const [view, setView] = useState('register'); // register | login | discovery | feed | chat | profile | events
-  const [loading, setLoading] = useState(false);
-  const [userData, setUserData] = useState({ name: "", poly: "", course: "", year: 1, phone: "" });
-  
-  // Real-Time System States
-  const [posts, setPosts] = useState([]);
-  const [matches, setMatches] = useState([]);
-  const [nearbyStudents, setNearbyStudents] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [messages, setMessages] = useState([]);
-  const [activeChat, setActiveChat] = useState(null);
+  const [session,        setSession]        = useState(null);
+  const [view,           setView]           = useState('landing');
+  const [loading,        setLoading]        = useState(false);
+  const [appReady,       setAppReady]       = useState(false);
 
-  // Feature Toggles
-  const [isStudyMode, setIsStudyMode] = useState(false); // Study Buddy Mode
-  const [isAnonPost, setIsAnonPost] = useState(false); // Anonymous Confessions
+  const [email,    setEmail]    = useState('');
+  const [password, setPassword] = useState('');
 
+  const [userData, setUserData] = useState({ name: '', poly: '', course: '', year: 1, phone: '' });
+  const [posts,           setPosts]          = useState([]);
+  const [matches,         setMatches]        = useState([]);
+  const [nearbyStudents,  setNearbyStudents] = useState([]);
+  const [events,          setEvents]         = useState([]);
+  const [isStudyMode,     setIsStudyMode]    = useState(false);
+  const [postText,        setPostText]       = useState('');
+  const [postMedia,       setPostMedia]      = useState(null);
+  const [isAnonPost,      setIsAnonPost]     = useState(false);
+
+  // ── Auth bootstrap ─────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-         fetchProfile(session.user.id);
-         fetchFeed();
-         fetchDiscovery();
-         fetchEvents();
-         fetchMatches();
-         setView('discovery');
+    let mounted = true;
+
+    // Safety timeout: Ensure app boots even if supabase hangs
+    const safetyId = setTimeout(() => {
+      if (mounted && !appReady) setAppReady(true);
+    }, 2500);
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      clearTimeout(safetyId);
+      const s = data?.session ?? null;
+      setSession(s);
+      if (s) {
+        loadAll(s);
+        setView('discovery');
+      }
+      setAppReady(true);
+    }).catch(() => {
+      if (mounted) {
+        clearTimeout(safetyId);
+        setAppReady(true);
       }
     });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) setView('discovery');
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (!mounted) return;
+      setSession(s);
+      if (s) {
+        loadAll(s);
+        setView('discovery');
+      } else {
+        setView('landing');
+      }
     });
+
+    return () => {
+      mounted = false;
+      clearTimeout(safetyId);
+      listener?.subscription?.unsubscribe?.();
+    };
   }, []);
+
+  useEffect(() => { if (session) fetchDiscovery(session); }, [isStudyMode]);
+
+  // ── Loaders ───────────────────────────────────────────────
+  const loadAll = useCallback((s) => {
+    fetchProfile(s.user.id);
+    fetchFeed();
+    fetchDiscovery(s);
+    fetchEvents();
+    fetchMatches(s);
+  }, [isStudyMode, userData.course]);
 
   const fetchProfile = async (id) => {
     try {
       const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
-      if (data) setUserData({ name: data.name, poly: data.polytechnic, course: data.course, year: data.year_of_study || 1, phone: data.phone_number });
-    } catch(err) { console.log("Profile Sync Fail"); }
+      if (data) setUserData({ name: data.name || '', poly: data.polytechnic || '', course: data.course || '', year: data.year_of_study || 1, phone: data.phone_number || '' });
+    } catch (e) { console.warn('fetchProfile:', e?.message); }
   };
 
   const fetchFeed = async () => {
     try {
-      const { data } = await supabase.from('posts').select('*, profiles(name, polytechnic)').order('created_at', { ascending: false });
+      const { data } = await supabase.from('posts').select('*, profiles(name, polytechnic)').order('created_at', { ascending: false }).limit(30);
       if (data) setPosts(data);
-    } catch(err) {}
+    } catch (e) { console.warn('fetchFeed:', e?.message); }
   };
 
-  const fetchDiscovery = async () => {
+  const fetchDiscovery = async (s) => {
     try {
-      let query = supabase.from('profiles').select('*').limit(15);
-      if (isStudyMode && userData.course) query = query.eq('course', userData.course); 
+      const curSession = s || session;
+      if (!curSession) return;
+      let query = supabase.from('profiles').select('*').limit(20);
+      if (isStudyMode && userData.course) query = query.eq('course', userData.course);
       const { data } = await query;
-      if (data && session) setNearbyStudents(data.filter(p => p.id !== session.user.id));
-    } catch(err) {}
+      if (data) setNearbyStudents(data.filter(p => p.id !== curSession.user.id));
+    } catch (e) { console.warn('fetchDiscovery:', e?.message); }
   };
 
   const fetchEvents = async () => {
     try {
       const { data } = await supabase.from('events').select('*').order('event_date', { ascending: true });
       if (data) setEvents(data);
-    } catch(err) {}
+    } catch (e) { console.warn('fetchEvents:', e?.message); }
   };
 
-  const fetchMatches = async () => {
-    if (!session) return;
+  const fetchMatches = async (s) => {
     try {
-      const { data } = await supabase.from('matches').select('*, profiles!user_2(name, polytechnic, phone_number)').or(`user_1.eq.${session.user.id},user_2.eq.${session.user.id}`);
+      const curSession = s || session;
+      if (!curSession) return;
+      const { data } = await supabase
+        .from('matches')
+        .select('*, profiles!user_2(name, polytechnic, phone_number)')
+        .or(`user_1.eq.${curSession.user.id},user_2.eq.${curSession.user.id}`);
       if (data) setMatches(data);
-    } catch(err) {}
+    } catch (e) { console.warn('fetchMatches:', e?.message); }
   };
 
-  useEffect(() => { fetchDiscovery(); }, [isStudyMode]);
+  // ── Actions ───────────────────────────────────────────────
+  const handleAuth = async () => {
+    if (!email || !password) return alert('Enter your email and password.');
+    if (view === 'register' && (!userData.name || !userData.poly || !userData.course)) {
+      return alert('Complete all fields to create your student profile.');
+    }
 
-  // --- ACTIONS ---
+    setLoading(true);
+    try {
+      if (view === 'login') {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) alert('Login Failed: ' + error.message);
+      } else {
+        // REGISTER
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        
+        if (data?.user) {
+          // Immediately create the public profile (satisfies DB NOT NULL constraints)
+          const { error: profError } = await supabase.from('profiles').upsert({
+            id: data.user.id,
+            name: userData.name,
+            surname: 'Student', // Default for now
+            email: email.toLowerCase(),
+            polytechnic: userData.poly,
+            course: userData.course,
+            year_of_study: 1,
+            created_at: new Date().toISOString()
+          });
+          
+          if (profError) {
+             console.warn('Profile Creation Error:', profError.message);
+             // Note: If email confirmation is ON, user can't login yet anyway.
+          }
+
+          alert('Account Created! Check your email to confirm then Sign In.');
+          setView('login');
+        }
+      }
+    } catch (e) { 
+      alert(e?.message || 'Something went wrong.'); 
+    } finally { 
+      setLoading(false); 
+    }
+  };
 
   const openWhatsApp = (phone) => {
-    if (!phone) return Alert.alert("Not Shared", "Student has not shared their WhatsApp yet.");
-    const url = `whatsapp://send?phone=${phone}`;
-    Linking.openURL(url).catch(() => Alert.alert("WhatsApp Not Found", "Please install WhatsApp to chat directly."));
+    if (!phone) return Alert.alert('Not Shared', 'Student has not shared their WhatsApp yet.');
+    Linking.openURL(`https://wa.me/${phone}`);
   };
 
-  const handleRSVP = async (evId) => {
-    Alert.alert("RSVP Confirmed! 🎫", "Check your student email for your digital ticket.");
+  const pickImage = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+    });
+    if (!result.canceled) setPostMedia(result.assets[0].uri);
   };
 
-  // --- SUB-VIEWS ---
+  const submitPost = async () => {
+    if ((!postText.trim() && !postMedia) || !session) return;
+    setLoading(true);
+    try {
+      let media_url = null;
 
-  const EventHub = () => (
-     <ScrollView className="flex-1 px-8 pt-4">
-        <View className="flex-row justify-between items-center mb-10"><Text className="text-2xl font-black italic uppercase text-white tracking-widest leading-none">Poly Event Hub</Text><TouchableOpacity className="w-12 h-12 bg-primary-600 rounded-2xl items-center justify-center shadow-glow shadow-primary-500/30"><Ticket color="#fff" size={24}/></TouchableOpacity></View>
-        {(events.length > 0 ? events : [{id:1,title:'Graduation Afterparty',location:'Great Hall',date:'OCT 20',price:'$5'}]).map(ev => (
-          <View key={ev.id} className="bg-white/5 p-6 rounded-[3.5rem] border border-white/10 shadow-2xl mb-6 relative overflow-hidden">
-             <View className="absolute top-4 right-4 bg-primary-600 px-3 py-1 rounded-full"><Text className="text-white text-[8px] font-black uppercase tracking-widest">{ev.price || 'FREE'}</Text></View>
-             <Text className="text-xl font-black italic text-white mb-2 uppercase">{ev.title}</Text>
-             <View className="flex-row items-center gap-2 mb-4"><MapPin color="#7c3aed" size={14}/><Text className="text-xs font-bold text-white/50">{ev.location} • {ev.date}</Text></View>
-             <TouchableOpacity onPress={() => handleRSVP(ev.id)} className="bg-primary-600 py-5 rounded-3xl items-center shadow-glow"><Text className="text-white font-black italic uppercase tracking-widest text-xs">Secure Spot</Text></TouchableOpacity>
-          </View>
-        ))}
-     </ScrollView>
-  );
+      if (postMedia) {
+        // Prepare file (Platform specific)
+        const filename = `${session.user.id}/${Date.now()}.jpg`;
+        const formData = new FormData();
+        
+        if (Platform.OS === 'web') {
+           const response = await fetch(postMedia);
+           const blob = await response.blob();
+           const { data: uploadData, error: uploadError } = await supabase.storage
+             .from('post-media')
+             .upload(filename, blob);
+           if (uploadError) throw uploadError;
+           media_url = supabase.storage.from('post-media').getPublicUrl(filename).data.publicUrl;
+        } else {
+           // Native upload logic simplified for current environment
+           // (Usually requires expo-file-system or base64)
+           // For this specific web-first fix, we focus on the web-stable method
+        }
+      }
 
-  // --- MAIN RENDER ---
+      await supabase.from('posts').insert({ 
+        author_id: session.user.id, 
+        content: postText.trim(), 
+        is_anonymous: isAnonPost,
+        media_url: media_url
+      });
+      
+      setPostText('');
+      setPostMedia(null);
+      fetchFeed();
+    } catch (e) { 
+      console.warn('submitPost:', e?.message);
+      alert('Upload failed: Ensure a "post-media" bucket exists in Supabase storage.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const MainApp = () => (
-     <SafeAreaView className="flex-1 bg-[#05051e]">
-       <StatusBar style="light" />
-       
-       {!session ? (
-         <View className="flex-1 p-8 justify-center items-center">
-            <Sparkles size={64} color="#f472b6" />
-            <Text className="text-5xl font-black italic uppercase text-white mt-6 tracking-tighter">UniLink</Text>
-            <TouchableOpacity onPress={() => setView('login')} className="bg-primary-600 w-full py-6 rounded-[2.5rem] items-center mt-20 shadow-glow shadow-primary-500/40 border-2 border-primary-500"><Text className="text-white font-black italic uppercase tracking-widest text-lg">Enter Platform</Text></TouchableOpacity>
-            <Text className="mt-8 text-white/20 text-[10px] font-black uppercase tracking-widest italic">Zimbabwe Student Ecosystem</Text>
-         </View>
-       ) : (
-         <>
-           <View className="px-8 pt-10 pb-4 flex-row justify-between items-center z-50">
-              <View><Text className="text-2xl font-black italic text-primary-500 uppercase">UniLink</Text><Text className="text-[8px] font-black text-white/30 uppercase tracking-[0.4em]">{userData.poly || 'Zimbabwe Poly'}</Text></View>
-              <TouchableOpacity onPress={() => setView('profile')} className="w-12 h-12 bg-white/5 rounded-2xl border-2 border-primary-500/30 items-center justify-center shadow-glow"><User color="#7c3aed" size={24}/></TouchableOpacity>
-           </View>
+  const handleSwipe = async (swipedId, isLike) => {
+    if (!session) return;
+    try {
+      // 1. Record the swipe
+      const { error } = await supabase.from('swipes').upsert({
+        swiper_id: session.user.id,
+        swiped_id: swipedId,
+        is_like: isLike,
+        is_study_request: isStudyMode
+      });
+      if (error) throw error;
 
-           <View className="flex-1 pb-32">
-              {view === 'discovery' && (
-                 <ScrollView className="flex-1 px-8 pt-4">
-                    <View className="flex-row justify-between items-end mb-10">
-                       <View><Text className="text-2xl font-black italic text-white uppercase">{isStudyMode ? 'Study Match' : 'Nearby students'}</Text><Text className="text-[8px] font-black text-white/20 uppercase tracking-widest italic">{isStudyMode ? `Academic Target: ${userData.course}` : 'Campus Proximity active'}</Text></View>
-                       <TouchableOpacity onPress={() => setIsStudyMode(!isStudyMode)} className={`px-5 py-4 rounded-[2rem] border-2 flex-row items-center gap-3 ${isStudyMode ? 'bg-primary-600 border-primary-400 shadow-glow' : 'bg-white/5 border-white/5 opacity-50'}`}><BookOpen color="#fff" size={18}/><Text className="text-white text-[10px] font-black uppercase tracking-widest">{isStudyMode ? 'ON' : 'STUDY'}</Text></TouchableOpacity>
-                    </View>
-                    {nearbyStudents.map(p => (
-                       <View key={p.id} className="w-full h-[60vh] rounded-[3.5rem] bg-white/5 mb-10 overflow-hidden border border-white/10 shadow-2xl relative">
-                          <View className="absolute inset-x-0 bottom-0 p-10 h-1/2 bg-gradient-to-t from-black justify-end">
-                             <Text className="text-4xl font-black italic text-white uppercase leading-none mb-1">{p.name || 'Student'}</Text>
-                             <Text className="text-primary-400 font-bold uppercase text-[10px] mb-8 tracking-[0.2em]">{p.polytechnic} • {p.course}</Text>
-                             <View className="flex-row gap-5"><TouchableOpacity className="w-16 h-16 bg-white/5 rounded-full items-center justify-center border border-white/20"><X color="#ef4444" size={32}/></TouchableOpacity><TouchableOpacity className="flex-1 bg-primary-600 py-6 rounded-3xl items-center shadow-glow"><Text className="text-white font-black italic uppercase tracking-widest text-lg">{isStudyMode ? 'Meet & Study' : 'Express Love'}</Text></TouchableOpacity></View>
-                          </View>
-                       </View>
-                    ))}
-                 </ScrollView>
-              )}
+      // 2. Check for match if it's a like
+      if (isLike) {
+        const { data: revSwipe } = await supabase
+          .from('swipes')
+          .select('*')
+          .eq('swiper_id', swipedId)
+          .eq('swiped_id', session.user.id)
+          .eq('is_like', true)
+          .single();
 
-              {view === 'feed' && (
-                 <ScrollView className="flex-1 px-8 pt-4">
-                    <View className="flex-row justify-between items-center mb-10">
-                       <View><Text className="text-2xl font-black italic uppercase text-white">Campus Flow</Text><Text className="text-[8px] font-black text-white/30 uppercase tracking-widest italic">{isAnonPost ? 'Anonymous Confidential active 🎭' : 'Real-Time Voice'}</Text></View>
-                       <TouchableOpacity onPress={() => setIsAnonPost(!isAnonPost)} className={`px-5 py-4 rounded-3xl border-2 flex-row items-center gap-3 ${isAnonPost ? 'bg-black border-white/50 shadow-glow' : 'bg-white/5 border-white/10 opacity-30'}`}><Ghost color={isAnonPost?'#fff':'#333'} size={18}/><Text className="text-white text-[10px] font-black uppercase italic">ANON</Text></TouchableOpacity>
-                    </View>
-                    <View className="bg-white/5 p-5 rounded-[2.5rem] mb-12 border border-white/5 flex-row items-center gap-4 shadow-xl">
-                       <TextInput className="flex-1 text-white text-sm font-bold italic" placeholder={isAnonPost ? "Type your confession..." : "Post to campus..."} placeholderTextColor="#333" />
-                       <TouchableOpacity className="bg-primary-600 p-4 rounded-2xl shadow-glow shadow-primary-500/30"><Send color="#fff" size={20}/></TouchableOpacity>
-                    </View>
-                    {posts.map(p => (
-                       <View key={p.id} className={`p-8 rounded-[3.5rem] border mb-8 shadow-2xl ${p.is_anonymous ? 'bg-black border-white/20' : 'bg-white/5 border-white/5'}`}>
-                          <View className="flex-row items-center gap-4 mb-6">
-                             <View className={`w-12 h-12 rounded-2xl items-center justify-center shadow-glow ${p.is_anonymous ? 'bg-indigo-900' : 'bg-primary-600'}`}>{p.is_anonymous ? <Ghost color="#fff" size={24}/> : <User color="#fff" size={24}/>}</View>
-                             <View className="flex-1"><Text className="text-white font-black text-sm italic">{p.is_anonymous ? 'Secret Student' : p.profiles?.name}</Text><Text className="text-[10px] text-white/20 uppercase tracking-widest font-black">{p.profiles?.polytechnic} • CAMPUS NEWS</Text></View>
-                          </View>
-                          <Text className="text-sm font-bold italic text-white/80 leading-relaxed">"{p.content}"</Text>
-                       </View>
-                    ))}
-                 </ScrollView>
-              )}
+        if (revSwipe) {
+          await supabase.from('matches').insert({
+            user_1: session.user.id,
+            user_2: swipedId,
+            match_type: isStudyMode ? 'study' : 'dating'
+          });
+          alert("It's a Match! 🎉 Check your chat tab.");
+          fetchMatches(session);
+        }
+      }
+      setNearbyStudents(prev => prev.filter(p => p.id !== swipedId));
+    } catch (e) { console.warn('handleSwipe:', e?.message); }
+  };
 
-              {view === 'events' && <EventHub />}
+  const handleRSVP = async (eventId) => {
+    if (!session) return;
+    try {
+      const { error } = await supabase.from('event_rsvps').insert({ 
+        event_id: eventId, 
+        user_id: session.user.id 
+      });
+      if (error) throw error;
+      alert('RSVP Confirmed! 🎫 Check your student email.');
+    } catch (e) { alert('Error: Already registered or network failure.'); }
+  };
+
+  // ── Rendering States ──────────────────────────────────────
+
+  if (!appReady) {
+    return (
+      <AppContainer>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Sparkles size={48} color={C.pink} />
+          <Text style={[styles.logo, { marginTop: 16 }]}>UniLink</Text>
+          <ActivityIndicator color={C.primary} style={{ marginTop: 24 }} />
+        </View>
+      </AppContainer>
+    );
+  }
+
+  if (!session) {
+    return (
+      <AppContainer>
+        <StatusBar style="light" />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, padding: 32, justifyContent: 'center' }}>
+          {view === 'landing' && (
+            <View style={{ alignItems: 'center' }}>
+              <Sparkles size={64} color={C.pink} />
+              <Text style={[styles.logo, { marginTop: 24, marginBottom: 8 }]}>UniLink</Text>
+              <Text style={styles.subtext}>Zimbabwe Student Ecosystem</Text>
+              <Btn label="Enter Platform" onPress={() => setView('login')} style={{ marginTop: 48, width: '100%' }} />
+              <TouchableOpacity onPress={() => setView('register')} style={{ marginTop: 16 }}>
+                <Text style={styles.linkText}>New student? Create Account →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {(view === 'login' || view === 'register') && (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 40 }}>
+              <TouchableOpacity onPress={() => setView('landing')} style={{ marginBottom: 24 }}>
+                <ArrowLeft color={C.text} size={24} />
+              </TouchableOpacity>
+              <Text style={styles.pageTitle}>{view === 'login' ? 'Welcome Back' : 'Join UniLink'}</Text>
+              <Text style={[styles.subtext, { marginBottom: 24 }]}>
+                {view === 'login' ? 'Sign in to your account' : 'Setup your official student profile'}
+              </Text>
               
-              {view === 'chat' && (
-                 <ScrollView className="flex-1 px-8 pt-4">
-                    <Text className="text-2xl font-black italic uppercase text-white mb-10 tracking-widest">In-App Inbox</Text>
-                    {matches.length > 0 ? matches.map(m => (
-                        <TouchableOpacity key={m.id} className="bg-white/5 p-6 rounded-[2.5rem] border border-white/5 flex-row items-center gap-4 mb-4 relative overflow-hidden">
-                           <View className="w-16 h-16 rounded-[1.5rem] bg-primary-500/20 items-center justify-center"><User color="#7c3aed" size={32}/></View>
-                           <View className="flex-1"><Text className="text-white font-black italic uppercase text-sm mb-1">{m.profiles?.name || 'New Match'}</Text><Text className="text-[9px] text-white/20 font-black uppercase tracking-[0.2em] italic">MATCHED</Text></View>
-                           <TouchableOpacity onPress={() => openWhatsApp(m.profiles?.phone_number)} className="bg-green-600/10 p-4 rounded-2xl border border-green-500/30"><Phone color="#16a34a" size={20}/></TouchableOpacity>
-                        </TouchableOpacity>
-                    )) : (
-                      <View className="items-center justify-center pt-24 opacity-30 text-center"><Star color="#7c3aed" size={64}/><Text className="text-sm font-black uppercase mt-6 text-white text-center italic tracking-widest">Matches & Messages appear here!</Text></View>
-                    )}
-                 </ScrollView>
+              {view === 'register' && (
+                <>
+                  <Field placeholder="Full Name" value={userData.name} onChangeText={(t) => setUserData({...userData, name: t})} />
+                  <Field placeholder="Polytechnic (e.g. Bulawayo Poly)" value={userData.poly} onChangeText={(t) => setUserData({...userData, poly: t})} />
+                  <Field placeholder="Your Course" value={userData.course} onChangeText={(t) => setUserData({...userData, course: t})} />
+                </>
               )}
-
-              {view === 'profile' && (
-                <View className="flex-1 px-10 pt-10 items-center">
-                   <View className="w-48 h-48 rounded-[4rem] bg-white/5 items-center justify-center border-4 border-primary-500/20 shadow-glow"><User color="#7c3aed" size={96}/></View>
-                   <Text className="text-4xl font-black italic uppercase text-white mt-12 leading-none text-center">{userData.name || 'Admin'}</Text>
-                   <Text className="text-primary-400 font-bold tracking-[0.3em] text-[10px] uppercase mt-4 text-center">{userData.poly || 'Zimbabwe Poly'}</Text>
-                   <View className="w-full bg-white/5 p-8 rounded-[3rem] border border-white/5 mt-12"><Text className="text-[9px] font-black uppercase text-primary-400 tracking-widest mb-3 italic tracking-[0.2em]">Academic Record</Text><Text className="text-sm font-black text-white italic uppercase">{userData.course} • Year {userData.year}</Text></View>
-                   <TouchableOpacity onPress={() => supabase.auth.signOut()} className="w-full h-20 bg-red-500/10 rounded-[2.5rem] items-center justify-center mt-6 border border-red-500/20"><Text className="text-red-500 font-black uppercase text-[10px] tracking-widest italic tracking-[0.2em]">Logout Session</Text></TouchableOpacity>
-                </View>
-              )}
-           </View>
-
-           {/* MOBILE NAVIGATION */}
-           <View className="h-32 bg-[#080825] border-t border-white/10 rounded-t-[5rem] flex-row px-10 items-center shadow-[0_-30px_80px_rgba(0,0,0,1)] absolute bottom-0 left-0 right-0">
-              {[{id:'discovery',icon:Heart},{id:'feed',icon:Globe},{id:'events',icon:Ticket},{id:'chat',icon:MessageSquare}].map(t => (
-                <TouchableOpacity key={t.id} onPress={() => setView(t.id)} className={`flex-1 items-center gap-2 ${view === t.id ? 'opacity-100' : 'opacity-20'}`}><t.icon color={view===t.id?'#7c3aed':'#fff'} size={32}/><Text className="text-[8px] font-black text-white uppercase italic tracking-widest">{t.id}</Text></TouchableOpacity>
-              ))}
-           </View>
-         </>
-       )}
-    </SafeAreaView>
-  );
+              
+              <Field placeholder="Student Email" value={email} onChangeText={setEmail} />
+              <Field placeholder="Password" value={password} onChangeText={setPassword} secure />
+              
+              <Btn label={view === 'login' ? 'Sign In' : 'Create Account'} onPress={handleAuth} loading={loading} style={{ marginTop: 8 }} />
+              
+              <TouchableOpacity onPress={() => setView(view === 'login' ? 'register' : 'login')} style={{ marginTop: 24, alignItems: 'center' }}>
+                <Text style={styles.linkText}>{view === 'login' ? "Don't have an account? Register" : 'Already registered? Sign In'}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+        </KeyboardAvoidingView>
+      </AppContainer>
+    );
+  }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-       <MainApp />
-    </GestureHandlerRootView>
+    <AppContainer>
+      <StatusBar style="light" />
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerLogo}>UniLink</Text>
+            <Text style={styles.headerSub}>{userData.poly || 'Zimbabwe Poly'}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setView('profile')} style={styles.avatarBtn}>
+            <User color={C.primary} size={22} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flex: 1 }}>
+          {view === 'discovery' && (
+            <ScrollView contentContainerStyle={{ padding: 24 }}>
+              <View style={[styles.row, { marginBottom: 20, justifyContent: 'space-between' }]}>
+                <View>
+                  <Text style={styles.sectionTitle}>{isStudyMode ? 'Study Match' : 'Discover'}</Text>
+                  <Text style={styles.sectionSub}>{isStudyMode ? 'Same course focus' : 'Campus proximity'}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setIsStudyMode(!isStudyMode)} style={[styles.pill, isStudyMode && styles.pillActive]}>
+                  <BookOpen color="#fff" size={14} />
+                  <Text style={styles.pillText}>{isStudyMode ? 'ON' : 'STUDY'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {nearbyStudents.length === 0 && (
+                <View style={styles.emptyBox}>
+                  <Star color={C.primary} size={48} />
+                  <Text style={styles.emptyText}>Looking for students...</Text>
+                </View>
+              )}
+
+              {nearbyStudents.map(p => (
+                <View key={p.id} style={styles.card}>
+                  <View style={styles.cardAvatar}><User color={C.primary} size={48} /></View>
+                  <View style={{ flex: 1, marginLeft: 16 }}>
+                    <Text style={styles.cardName}>{p.name || 'Student'}</Text>
+                    <Text style={styles.cardSub}>{p.polytechnic}</Text>
+                  </View>
+                  <View style={styles.row}>
+                    <TouchableOpacity onPress={() => handleSwipe(p.id, false)} style={styles.passBtn}>
+                      <X color="#ef4444" size={22} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleSwipe(p.id, true)} style={styles.likeBtn}>
+                      <Heart color="#fff" size={22} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {view === 'feed' && (
+            <ScrollView contentContainerStyle={{ padding: 24 }}>
+              <View style={[styles.row, { marginBottom: 20, justifyContent: 'space-between' }]}>
+                <Text style={styles.sectionTitle}>Campus Flow</Text>
+                <TouchableOpacity onPress={() => setIsAnonPost(!isAnonPost)} style={[styles.pill, isAnonPost && styles.pillActive]}>
+                  <Ghost color="#fff" size={14} />
+                  <Text style={styles.pillText}>ANON</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.postBox}>
+                <TouchableOpacity onPress={pickImage} style={[styles.imageBtn, postMedia && { borderColor: C.primary }]}>
+                  <Camera color={postMedia ? C.primary : "rgba(255,255,255,0.4)"} size={20} />
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.postInput}
+                  placeholder="Post something to campus..."
+                  placeholderTextColor="rgba(255,255,255,0.2)"
+                  value={postText}
+                  onChangeText={setPostText}
+                  multiline
+                />
+                <TouchableOpacity onPress={submitPost} disabled={loading} style={styles.sendBtn}>
+                  {loading ? <ActivityIndicator color="#fff" size="small" /> : <Send color="#fff" size={18} />}
+                </TouchableOpacity>
+              </View>
+              
+              {postMedia && (
+                <View style={styles.previewContainer}>
+                  <Image source={{ uri: postMedia }} style={styles.previewImg} />
+                  <TouchableOpacity onPress={() => setPostMedia(null)} style={styles.removeMedia}>
+                    <X color="#fff" size={12} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {posts.map(p => (
+                <View key={p.id} style={styles.postCard}>
+                  <View style={[styles.postAvatar, p.is_anonymous && { backgroundColor: '#312e81' }]}>
+                    {p.is_anonymous ? <Ghost color="#fff" size={20} /> : <User color="#fff" size={20} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.postAuthor}>{p.is_anonymous ? 'Secret Student' : p.profiles?.name}</Text>
+                    <Text style={styles.postContent}>{p.content}</Text>
+                    {p.media_url && (
+                      <Image source={{ uri: p.media_url }} style={styles.postMedia} resizeMode="cover" />
+                    )}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {view === 'events' && (
+            <ScrollView contentContainerStyle={{ padding: 24 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 20 }]}>Poly Event Hub</Text>
+              {events.map(ev => (
+                <View key={ev.id} style={styles.eventCard}>
+                   <Text style={styles.eventTitle}>{ev.title}</Text>
+                   <Text style={styles.eventSub}>{ev.location} • {ev.event_date}</Text>
+                   <Btn label="Secure Spot 🎫" onPress={() => handleRSVP(ev.id)} style={{ marginTop: 16 }} />
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {view === 'chat' && (
+            <ScrollView contentContainerStyle={{ padding: 24 }}>
+              <Text style={[styles.sectionTitle, { marginBottom: 20 }]}>Messages</Text>
+              {matches.length === 0 && (
+                <View style={styles.emptyBox}>
+                  <MessageSquare color={C.primary} size={48} />
+                  <Text style={styles.emptyText}>Matches appear here!</Text>
+                </View>
+              )}
+              {matches.map(m => (
+                <View key={m.id} style={styles.matchCard}>
+                  <View style={styles.matchAvatar}><User color={C.primary} size={28} /></View>
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={styles.matchName}>{m.profiles?.name}</Text>
+                    <Text style={styles.matchSub}>MATCHED</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => openWhatsApp(m.profiles?.phone_number)} style={styles.waBtn}>
+                    <Phone color="#16a34a" size={18} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {view === 'profile' && (
+            <ScrollView contentContainerStyle={{ padding: 32, alignItems: 'center' }}>
+              <View style={styles.profileAvatar}><User color={C.primary} size={72} /></View>
+              <Text style={styles.profileName}>{userData.name || 'Student'}</Text>
+              <Text style={styles.profilePoly}>{userData.poly || 'Zimbabwe Poly'}</Text>
+              <Btn label="Sign Out" onPress={() => supabase.auth.signOut()} style={{ marginTop: 16, width: '100%' }} secondary />
+            </ScrollView>
+          )}
+        </View>
+
+        <View style={styles.nav}>
+          {[
+            { id: 'discovery', icon: Heart, label: 'Discover' },
+            { id: 'feed',      icon: Globe, label: 'Feed' },
+            { id: 'events',    icon: Ticket, label: 'Events' },
+            { id: 'chat',      icon: MessageSquare, label: 'Chat' },
+          ].map(t => {
+            const active = view === t.id;
+            const Icon = t.icon;
+            return (
+              <TouchableOpacity key={t.id} onPress={() => setView(t.id)} style={styles.navItem}>
+                <Icon color={active ? C.primary : 'rgba(255,255,255,0.25)'} size={26} />
+                <Text style={[styles.navLabel, active && { color: C.primary }]}>{t.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </GestureHandlerRootView>
+    </AppContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  // Web Layout
+  webViewport: { flex: 1, flexDirection: 'row', backgroundColor: C.webBg },
+  webSidebar:  { width: 400, borderRightWidth: 1, borderRightColor: C.border, justifyContent: 'center' },
+  sidebarDesc: { color: C.dim, fontSize: 16, lineHeight: 26 },
+  sidebarFooter:{ position: 'absolute', bottom: 40, left: 40 },
+  sidebarFooterText: { color: C.dimmer, fontSize: 12, fontWeight: '700' },
+  phoneContainer:{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  phoneFrame:  { width: 375, height: 812, borderRadius: 40, overflow: 'hidden', backgroundColor: C.bg, borderWidth: 8, borderColor: '#111', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.5, shadowRadius: 30 },
+
+  // Standard UI
+  btn:          { paddingVertical: 18, paddingHorizontal: 24, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  btnPrimary:   { backgroundColor: '#7c3aed' },
+  btnSecondary: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  btnText:      { color: '#fff', fontWeight: '900', fontSize: 14, letterSpacing: 1.5, textTransform: 'uppercase' },
+
+  field:      { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 20, paddingVertical: 16, marginBottom: 14 },
+  fieldInput: { color: '#fff', fontSize: 15, fontWeight: '600', height: 40 },
+
+  logo:       { color: '#fff', fontSize: 42, fontWeight: '900', fontStyle: 'italic', textTransform: 'uppercase' },
+  subtext:    { color: 'rgba(255,255,255,0.3)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 2 },
+  linkText:   { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
+  pageTitle:  { color: '#fff', fontSize: 30, fontWeight: '900', fontStyle: 'italic', textTransform: 'uppercase', marginBottom: 6 },
+  
+  header:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20 },
+  headerLogo: { color: '#7c3aed', fontSize: 22, fontWeight: '900', fontStyle: 'italic', textTransform: 'uppercase' },
+  headerSub:  { color: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: '800', letterSpacing: 2 },
+  avatarBtn:  { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' },
+
+  sectionTitle:{ color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic', textTransform: 'uppercase' },
+  sectionSub: { color: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
+
+  pill:       { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.04)' },
+  pillActive: { backgroundColor: '#7c3aed' },
+  pillText:   { color: '#fff', fontSize: 10, fontWeight: '900' },
+
+  card:       { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 24, padding: 16, marginBottom: 16 },
+  cardAvatar: { width: 64, height: 64, borderRadius: 18, backgroundColor: 'rgba(124,58,237,0.15)', alignItems: 'center', justifyContent: 'center' },
+  cardName:   { color: '#fff', fontSize: 18, fontWeight: '900' },
+  cardSub:    { color: '#7c3aed', fontSize: 11, fontWeight: '700' },
+  passBtn:    { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  likeBtn:    { width: 44, height: 44, borderRadius: 22, backgroundColor: '#7c3aed', alignItems: 'center', justifyContent: 'center' },
+
+  postBox:    { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, padding: 12, marginBottom: 20 },
+  imageBtn:   { width: 44, height: 44, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center', marginRight: 12, borderWidth: 1, borderColor: 'transparent' },
+  postInput:  { flex: 1, color: '#fff', fontSize: 14, minHeight: 40, marginRight: 12 },
+  sendBtn:    { width: 44, height: 44, borderRadius: 12, backgroundColor: '#7c3aed', alignItems: 'center', justifyContent: 'center' },
+  
+  previewContainer: { marginBottom: 20, position: 'relative' },
+  previewImg:  { width: '100%', height: 200, borderRadius: 20 },
+  removeMedia: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.5)', width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+
+  postCard:   { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 20, padding: 16, marginBottom: 12, flexDirection: 'row' },
+  postAvatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#4c1d95', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  postAuthor: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  postContent:{ color: 'rgba(255,255,255,0.7)', fontSize: 14, marginTop: 4 },
+  postMedia:  { width: '100%', height: 250, borderRadius: 16, marginTop: 12 },
+
+  eventCard:  { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 24, padding: 20, marginBottom: 16 },
+  eventTitle: { color: '#fff', fontWeight: '900', fontSize: 18 },
+  eventSub:   { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 4 },
+
+  matchCard:  { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, padding: 16, marginBottom: 12 },
+  matchAvatar:{ width: 50, height: 50, borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.15)', alignItems: 'center', justifyContent: 'center' },
+  matchName:  { color: '#fff', fontWeight: '800', fontSize: 16 },
+  matchSub:   { color: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: '700' },
+  waBtn:      { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(22,163,74,0.1)', alignItems: 'center', justifyContent: 'center' },
+
+  profileAvatar:{ width: 120, height: 120, borderRadius: 40, backgroundColor: 'rgba(124,58,237,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  profileName:  { color: '#fff', fontSize: 24, fontWeight: '900' },
+  profilePoly:  { color: '#7c3aed', fontSize: 12, fontWeight: '700', marginTop: 4 },
+
+  nav:        { flexDirection: 'row', backgroundColor: '#080825', height: 80, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 12 },
+  navItem:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  navLabel:   { color: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: '800', marginTop: 4 },
+
+  row: { flexDirection: 'row', alignItems: 'center' },
+  emptyBox: { alignItems: 'center', paddingVertical: 40, opacity: 0.5 },
+  emptyText: { color: '#fff', marginTop: 16, textAlign: 'center' }
+});

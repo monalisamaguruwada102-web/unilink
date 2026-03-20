@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     course TEXT NOT NULL,
     year_of_study INT DEFAULT 1, -- For Study Buddy Matching
     bio TEXT,
+    phone_number TEXT, -- For WhatsApp direct chat integration
     avatar_url TEXT DEFAULT 'https://ui-avatars.com/api/?name=Student&background=7c3aed&color=fff',
     is_study_mode BOOLEAN DEFAULT FALSE,
     location GEOGRAPHY(POINT) DEFAULT NULL,
