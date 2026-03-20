@@ -3,6 +3,7 @@
     "name": "UniLink",
     "slug": "unilink",
     "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
@@ -31,6 +32,7 @@
       }
     },
     "web": {
+      "bundler": "metro",
       "favicon": "./assets/favicon.png",
       "description": "UniLink Student Ecosystem Zimbabwe"
     }
