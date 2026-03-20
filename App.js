@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, Image, SafeAreaView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, FlatList, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { supabase } from './src/lib/supabase';
+import { supabase } from './supabase';
 import { 
   Heart, X, MessageCircle, Info, ShieldCheck, GraduationCap, 
   MapPin, School, Mail, User, Sparkles, Send, Globe, Filter, Star, 
