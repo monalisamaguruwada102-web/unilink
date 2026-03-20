@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.env
+*.apk
+*.ipa
+.pnp*
+.yarn/

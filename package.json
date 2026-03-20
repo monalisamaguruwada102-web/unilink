@@ -1,0 +1,41 @@
+{
+  "name": "unilink-dating-app",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.3",
+    "clsx": "^2.0.0",
+    "expo": "^55.0.8",
+    "expo-file-system": "^55.0.11",
+    "expo-location": "^55.1.4",
+    "expo-status-bar": "^55.0.4",
+    "framer-motion": "^10.16.4",
+    "lucide-react": "^0.292.0",
+    "lucide-react-native": "^0.577.0",
+    "moti": "^0.30.0",
+    "nativewind": "^4.2.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-native": "^0.84.1",
+    "react-native-gesture-handler": "^2.30.0",
+    "react-native-reanimated": "^4.2.2",
+    "react-native-safe-area-context": "^5.7.0",
+    "tailwind-merge": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.3.5",
+    "vite": "^4.4.5"
+  }
+}
