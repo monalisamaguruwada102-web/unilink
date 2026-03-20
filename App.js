@@ -67,12 +67,13 @@ function Field({ placeholder, value, onChangeText, secure }) {
 
 // ── Web Responsive Wrapper ─────────────────────────────────
 
-function AppContainer({ children }) {
+function AppContainer({ children, view, setView, userData, isStudyMode, setIsStudyMode }) {
   const isWeb = Platform.OS === 'web';
   const { width } = Dimensions.get('window');
-  const isMobileView = width < 768;
+  const isDesktop = width >= 1024;
+  const isTablet = width >= 768 && width < 1024;
 
-  if (!isWeb || isMobileView) {
+  if (!isWeb || (!isDesktop && !isTablet)) {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
         {children}
@@ -80,27 +81,76 @@ function AppContainer({ children }) {
     );
   }
 
+  const NavItem = ({ id, label, icon: Icon }) => {
+    const active = view === id;
+    return (
+      <TouchableOpacity 
+        onPress={() => setView(id)} 
+        style={[styles.webNavItem, active && styles.webNavItemActive]}
+      >
+        <Icon color={active ? '#fff' : C.dim} size={22} />
+        <Text style={[styles.webNavLabel, active && { color: '#fff' }]}>{label}</Text>
+      </TouchableOpacity>
+    );
+  };
+
   return (
-    <View style={styles.webViewport}>
+    <View style={styles.webRoot}>
+      {/* ── Desktop Sidebar ── */}
       <View style={styles.webSidebar}>
         <View style={{ padding: 40 }}>
-           <Sparkles size={48} color={C.pink} />
-           <Text style={[styles.logo, { marginTop: 24, fontSize: 32 }]}>UniLink</Text>
-           <Text style={[styles.subtext, { marginBottom: 32 }]}>Student Ecosystem</Text>
-           <Text style={styles.sidebarDesc}>
-             Zimbabwe's exclusive university platform for students to connect, study, and thrive together.
-           </Text>
+           <View style={styles.row}>
+             <Sparkles size={32} color={C.pink} />
+             <Text style={[styles.logo, { marginLeft: 12, fontSize: 24 }]}>UniLink</Text>
+           </View>
+           
+           <View style={{ marginTop: 60 }}>
+              <NavItem id="discovery" label="Discovery" icon={Heart} />
+              <NavItem id="feed"      label="Campus Feed" icon={Globe} />
+              <NavItem id="events"    icon={Ticket} label="Student Events" />
+              <NavItem id="chat"      icon={MessageSquare} label="Messages" />
+              <NavItem id="profile"   icon={User} label="My Profile" />
+           </View>
         </View>
-        <View style={styles.sidebarFooter}>
-           <Text style={styles.sidebarFooterText}>© 2026 UniLink Zim</Text>
+
+        <View style={styles.webSidebarFooter}>
+           <View style={styles.webUserPill}>
+              <View style={styles.webAvatarSm}><User color={C.primary} size={16} /></View>
+              <View style={{ marginLeft: 12 }}>
+                <Text style={styles.webUserName}>{userData.name || 'Student'}</Text>
+                <Text style={styles.webUserSub}>{userData.poly || 'Zimbabwe Poly'}</Text>
+              </View>
+           </View>
         </View>
       </View>
       
-      <View style={styles.phoneContainer}>
-        <View style={styles.phoneFrame}>
+      {/* ── Main Content Area ── */}
+      <View style={styles.webMain}>
+        <View style={styles.webContentContainer}>
           {children}
         </View>
       </View>
+
+      {/* ── Right Discovery Column (Desktop) ── */}
+      {isDesktop && (
+        <View style={styles.webRightCol}>
+           <View style={styles.webWidget}>
+              <Text style={styles.webWidgetTitle}>Quick Filter</Text>
+              <TouchableOpacity onPress={() => setIsStudyMode(!isStudyMode)} style={[styles.pill, isStudyMode && styles.pillActive, { marginTop: 16 }]}>
+                <BookOpen color="#fff" size={14} />
+                <Text style={styles.pillText}>{isStudyMode ? 'STUDY MODE ACTIVE' : 'SWITCH TO STUDY'}</Text>
+              </TouchableOpacity>
+              <Text style={styles.webWidgetDesc}>In Study Mode, we filter for students in your specific course: {userData.course || 'Select Course'}</Text>
+           </View>
+           
+           <View style={styles.webWidget}>
+              <Text style={styles.webWidgetTitle}>University Events</Text>
+              <Text style={[styles.subtext, { marginTop: 10 }]}>Stay connected with your polytechnic activities.</Text>
+           </View>
+           
+           <Text style={styles.sidebarFooterText}>© 2026 UniLink Zim Ecosystem</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -125,6 +175,11 @@ export default function App() {
   const [postText,        setPostText]       = useState('');
   const [postMedia,       setPostMedia]      = useState(null);
   const [isAnonPost,      setIsAnonPost]     = useState(false);
+
+  const [activeMatch,     setActiveMatch]    = useState(null);
+  const [chatMessages,    setChatMessages]   = useState([]);
+  const [isEditingBio,    setIsEditingBio]   = useState(false);
+  const [myBio,           setMyBio]          = useState('');
 
   // ── Auth bootstrap ─────────────────────────────────────────
   useEffect(() => {
@@ -184,7 +239,10 @@ export default function App() {
   const fetchProfile = async (id) => {
     try {
       const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
-      if (data) setUserData({ name: data.name || '', poly: data.polytechnic || '', course: data.course || '', year: data.year_of_study || 1, phone: data.phone_number || '' });
+      if (data) {
+        setUserData({ name: data.name || '', poly: data.polytechnic || '', course: data.course || '', year: data.year_of_study || 1, phone: data.phone_number || '' });
+        setMyBio(data.bio || '');
+      }
     } catch (e) { console.warn('fetchProfile:', e?.message); }
   };
 
@@ -377,12 +435,42 @@ export default function App() {
     } catch (e) { alert('Error: Already registered or network failure.'); }
   };
 
+  const updateBio = async () => {
+    if (!session) return;
+    try {
+      await supabase.from('profiles').update({ bio: myBio }).eq('id', session.user.id);
+      setIsEditingBio(false);
+    } catch (e) { console.warn('updateBio:', e.message); }
+  };
+
+  const startChat = (match) => {
+     setActiveMatch(match);
+     fetchMsgs(match.id);
+     // Enable Realtime
+     const channel = supabase
+      .channel(`room:${match.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `match_id=eq.${match.id}` }, 
+        (payload) => setChatMessages(m => [...m, payload.new]))
+      .subscribe();
+     return () => supabase.removeChannel(channel);
+  };
+
+  const fetchMsgs = async (mid) => {
+    const { data } = await supabase.from('messages').select('*').eq('match_id', mid).order('created_at', { ascending: true });
+    if (data) setChatMessages(data);
+  };
+
+  const sendMsg = async (text) => {
+    if (!text.trim() || !activeMatch) return;
+    await supabase.from('messages').insert({ match_id: activeMatch.id, sender_id: session.user.id, text });
+  };
+
   // ── Rendering States ──────────────────────────────────────
 
   if (!appReady) {
     return (
       <AppContainer>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: C.bg }}>
           <Sparkles size={48} color={C.pink} />
           <Text style={[styles.logo, { marginTop: 16 }]}>UniLink</Text>
           <ActivityIndicator color={C.primary} style={{ marginTop: 24 }} />
@@ -393,20 +481,21 @@ export default function App() {
 
   if (!session) {
     return (
-      <AppContainer>
+      <AppContainer userData={userData}>
         <StatusBar style="light" />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, padding: 32, justifyContent: 'center' }}>
-          {view === 'landing' && (
-            <View style={{ alignItems: 'center' }}>
-              <Sparkles size={64} color={C.pink} />
-              <Text style={[styles.logo, { marginTop: 24, marginBottom: 8 }]}>UniLink</Text>
-              <Text style={styles.subtext}>Zimbabwe Student Ecosystem</Text>
-              <Btn label="Enter Platform" onPress={() => setView('login')} style={{ marginTop: 48, width: '100%' }} />
-              <TouchableOpacity onPress={() => setView('register')} style={{ marginTop: 16 }}>
-                <Text style={styles.linkText}>New student? Create Account →</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+        <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center' }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ padding: 32, maxWidth: 450, alignSelf: 'center', width: '100%' }}>
+            {view === 'landing' && (
+              <View style={{ alignItems: 'center' }}>
+                <Sparkles size={64} color={C.pink} />
+                <Text style={[styles.logo, { marginTop: 24, marginBottom: 8 }]}>UniLink</Text>
+                <Text style={styles.subtext}>Zimbabwe Student Ecosystem</Text>
+                <Btn label="Enter Platform" onPress={() => setView('login')} style={{ marginTop: 48, width: '100%' }} />
+                <TouchableOpacity onPress={() => setView('register')} style={{ marginTop: 16 }}>
+                  <Text style={styles.linkText}>New student? Create Account →</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
           {(view === 'login' || view === 'register') && (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 40 }}>
@@ -442,7 +531,7 @@ export default function App() {
   }
 
   return (
-    <AppContainer>
+    <AppContainer view={view} setView={setView} userData={userData} isStudyMode={isStudyMode} setIsStudyMode={setIsStudyMode}>
       <StatusBar style="light" />
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View style={styles.header}>
@@ -450,9 +539,12 @@ export default function App() {
             <Text style={styles.headerLogo}>UniLink</Text>
             <Text style={styles.headerSub}>{userData.poly || 'Zimbabwe Poly'}</Text>
           </View>
-          <TouchableOpacity onPress={() => setView('profile')} style={styles.avatarBtn}>
-            <User color={C.primary} size={22} />
-          </TouchableOpacity>
+          <View style={styles.row}>
+             {activeMatch && <Text style={styles.chatIndicator}>Active Chat</Text>}
+             <TouchableOpacity onPress={() => setView('profile')} style={styles.avatarBtn}>
+               <User color={C.primary} size={22} />
+             </TouchableOpacity>
+          </View>
         </View>
 
         <View style={{ flex: 1 }}>
@@ -563,7 +655,7 @@ export default function App() {
           )}
 
           {view === 'chat' && (
-            <ScrollView contentContainerStyle={{ padding: 24 }}>
+            <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 100 }}>
               <Text style={[styles.sectionTitle, { marginBottom: 20 }]}>Messages</Text>
               {matches.length === 0 && (
                 <View style={styles.emptyBox}>
@@ -572,18 +664,43 @@ export default function App() {
                 </View>
               )}
               {matches.map(m => (
-                <View key={m.id} style={styles.matchCard}>
+                <TouchableOpacity key={m.id} onPress={() => startChat(m)} style={styles.matchCard}>
                   <View style={styles.matchAvatar}><User color={C.primary} size={28} /></View>
                   <View style={{ flex: 1, marginLeft: 14 }}>
-                    <Text style={styles.matchName}>{m.profiles?.name}</Text>
-                    <Text style={styles.matchSub}>MATCHED</Text>
+                    <Text style={styles.matchName}>{(m.profiles?.id === session.user.id ? m.profiles_user_1?.name : m.profiles?.name) || 'UniLink Match'}</Text>
+                    <Text style={styles.matchSub}>TAP TO CHAT</Text>
                   </View>
                   <TouchableOpacity onPress={() => openWhatsApp(m.profiles?.phone_number)} style={styles.waBtn}>
                     <Phone color="#16a34a" size={18} />
                   </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
               ))}
             </ScrollView>
+          )}
+
+          {activeMatch && (
+            <View style={StyleSheet.absoluteFillObject}>
+               <View style={styles.chatHeader}>
+                  <TouchableOpacity onPress={() => setActiveMatch(null)}><ArrowLeft color="#fff" /></TouchableOpacity>
+                  <Text style={styles.chatTitle}>UNI-LINK CHAT</Text>
+                  <View width={24} />
+               </View>
+               <ScrollView style={{ flex: 1, backgroundColor: C.bg, padding: 20 }}>
+                  {chatMessages.map(m => (
+                    <View key={m.id} style={[styles.msgBubble, m.sender_id === session.user.id ? styles.msgOut : styles.msgIn]}>
+                       <Text style={styles.msgText}>{m.text}</Text>
+                    </View>
+                  ))}
+               </ScrollView>
+               <View style={styles.chatInputRow}>
+                  <TextInput 
+                    style={styles.chatIn} 
+                    placeholder="Message..." 
+                    placeholderTextColor={C.dim}
+                    onSubmitEditing={(e) => sendMsg(e.nativeEvent.text)} 
+                  />
+               </View>
+            </View>
           )}
 
           {view === 'profile' && (
@@ -591,42 +708,79 @@ export default function App() {
               <View style={styles.profileAvatar}><User color={C.primary} size={72} /></View>
               <Text style={styles.profileName}>{userData.name || 'Student'}</Text>
               <Text style={styles.profilePoly}>{userData.poly || 'Zimbabwe Poly'}</Text>
-              <Btn label="Sign Out" onPress={() => supabase.auth.signOut()} style={{ marginTop: 16, width: '100%' }} secondary />
+              
+              <View style={styles.bioBox}>
+                <Text style={styles.bioLabel}>STUDENT BIO</Text>
+                {isEditingBio ? (
+                  <>
+                    <TextInput 
+                        style={styles.bioField} 
+                        value={myBio} 
+                        onChangeText={setMyBio} 
+                        multiline 
+                        autoFocus
+                    />
+                    <Btn label="Save Changes" onPress={updateBio} style={{ marginTop: 10 }} />
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => setIsEditingBio(true)}>
+                    <Text style={styles.bioText}>{myBio || "Tap here to tell students about yourself..."}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <Btn label="Sign Out" onPress={() => supabase.auth.signOut()} style={{ marginTop: 32, width: '100%' }} secondary />
             </ScrollView>
           )}
         </View>
 
-        <View style={styles.nav}>
-          {[
-            { id: 'discovery', icon: Heart, label: 'Discover' },
-            { id: 'feed',      icon: Globe, label: 'Feed' },
-            { id: 'events',    icon: Ticket, label: 'Events' },
-            { id: 'chat',      icon: MessageSquare, label: 'Chat' },
-          ].map(t => {
-            const active = view === t.id;
-            const Icon = t.icon;
-            return (
-              <TouchableOpacity key={t.id} onPress={() => setView(t.id)} style={styles.navItem}>
-                <Icon color={active ? C.primary : 'rgba(255,255,255,0.25)'} size={26} />
-                <Text style={[styles.navLabel, active && { color: C.primary }]}>{t.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        {Dimensions.get('window').width < 768 && (
+          <View style={styles.nav}>
+            {[
+              { id: 'discovery', icon: Heart, label: 'Discover' },
+              { id: 'feed',      icon: Globe, label: 'Feed' },
+              { id: 'events',    icon: Ticket, label: 'Events' },
+              { id: 'chat',      icon: MessageSquare, label: 'Chat' },
+            ].map(t => {
+              const active = view === t.id;
+              const Icon = t.icon;
+              return (
+                <TouchableOpacity key={t.id} onPress={() => setView(t.id)} style={styles.navItem}>
+                  <Icon color={active ? C.primary : 'rgba(255,255,255,0.25)'} size={26} />
+                  <Text style={[styles.navLabel, active && { color: C.primary }]}>{t.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </GestureHandlerRootView>
     </AppContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  // Web Layout
-  webViewport: { flex: 1, flexDirection: 'row', backgroundColor: C.webBg },
-  webSidebar:  { width: 400, borderRightWidth: 1, borderRightColor: C.border, justifyContent: 'center' },
-  sidebarDesc: { color: C.dim, fontSize: 16, lineHeight: 26 },
-  sidebarFooter:{ position: 'absolute', bottom: 40, left: 40 },
-  sidebarFooterText: { color: C.dimmer, fontSize: 12, fontWeight: '700' },
-  phoneContainer:{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
-  phoneFrame:  { width: 375, height: 812, borderRadius: 40, overflow: 'hidden', backgroundColor: C.bg, borderWidth: 8, borderColor: '#111', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.5, shadowRadius: 30 },
+  // Full Website Layout
+  webRoot:      { flex: 1, flexDirection: 'row', backgroundColor: C.webBg },
+  webSidebar:   { width: 320, backgroundColor: '#080825', borderRightWidth: 1, borderRightColor: C.border },
+  webMain:      { flex: 1, backgroundColor: C.bg },
+  webRightCol:  { width: 340, backgroundColor: '#080825', borderLeftWidth: 1, borderLeftColor: C.border, padding: 32 },
+  webContentContainer: { maxWidth: 800, alignSelf: 'center', width: '100%', flex: 1 },
+
+  webNavItem:   { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, marginBottom: 8 },
+  webNavItemActive: { backgroundColor: 'rgba(124,58,237,0.1)' },
+  webNavLabel:  { color: C.dim, marginLeft: 16, fontWeight: '700', fontSize: 16 },
+
+  webSidebarFooter: { position: 'absolute', bottom: 0, width: '100%', padding: 20, borderTopWidth: 1, borderTopColor: C.border },
+  webUserPill:  { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, borderRadius: 16 },
+  webAvatarSm:  { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(124,58,237,0.1)', alignItems: 'center', justifyContent: 'center' },
+  webUserName:  { color: '#fff', fontSize: 14, fontWeight: '800' },
+  webUserSub:   { color: C.dim, fontSize: 11, fontWeight: '600' },
+
+  webWidget:    { backgroundColor: 'rgba(255,255,255,0.02)', padding: 24, borderRadius: 24, marginBottom: 24 },
+  webWidgetTitle:{ color: '#fff', fontWeight: '900', fontSize: 14, letterSpacing: 1.5, textTransform: 'uppercase' },
+  webWidgetDesc: { color: C.dim, fontSize: 13, marginTop: 12, lineHeight: 20 },
+
+  chatIndicator: { color: C.pink, fontSize: 10, fontWeight: '900', marginRight: 15, textTransform: 'uppercase' },
 
   // Standard UI
   btn:          { paddingVertical: 18, paddingHorizontal: 24, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
@@ -689,6 +843,20 @@ const styles = StyleSheet.create({
   profileAvatar:{ width: 120, height: 120, borderRadius: 40, backgroundColor: 'rgba(124,58,237,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
   profileName:  { color: '#fff', fontSize: 24, fontWeight: '900' },
   profilePoly:  { color: '#7c3aed', fontSize: 12, fontWeight: '700', marginTop: 4 },
+
+  bioBox:       { width: '100%', marginTop: 30, backgroundColor: 'rgba(255,255,255,0.03)', padding: 20, borderRadius: 24 },
+  bioLabel:     { color: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: '900', marginBottom: 10 },
+  bioText:      { color: 'rgba(255,255,255,0.6)', fontSize: 15, lineHeight: 22 },
+  bioField:     { color: '#fff', fontSize: 15, padding: 10, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12 },
+
+  chatHeader:   { height: 100, paddingTop: 40, backgroundColor: '#080825', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: C.border },
+  chatTitle:    { color: '#fff', fontWeight: '900', fontSize: 13, letterSpacing: 2 },
+  msgBubble:    { padding: 14, borderRadius: 20, maxWidth: '80%', marginBottom: 12 },
+  msgOut:       { alignSelf: 'flex-end', backgroundColor: C.primary },
+  msgIn:        { alignSelf: 'flex-start', backgroundColor: C.dimmer },
+  msgText:      { color: '#fff', fontSize: 15 },
+  chatInputRow: { padding: 20, backgroundColor: '#080825', borderTopWidth: 1, borderTopColor: C.border },
+  chatIn:       { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 50, paddingHorizontal: 20, paddingVertical: 14, color: '#fff' },
 
   nav:        { flexDirection: 'row', backgroundColor: '#080825', height: 80, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 12 },
   navItem:    { flex: 1, alignItems: 'center', justifyContent: 'center' },
